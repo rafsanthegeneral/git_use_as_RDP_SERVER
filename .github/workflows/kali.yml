@@ -1,79 +1,66 @@
-name: Kali-RDP
+name: Ubuntu-XFCE-RDP
 
 on:
   workflow_dispatch:
 
 jobs:
-  kali-rdp-job:
-    runs-on: ubuntu-latest  # GitHub hosted runner (Ubuntu)
+  ubuntu-desktop:
+    runs-on: ubuntu-latest
     timeout-minutes: 360
 
     steps:
-      - name: Install XRDP and Desktop Environment
+      - name: Install XFCE and XRDP
         run: |
           sudo apt update
-          sudo apt install -y xrdp xfce4 xfce4-goodies
-          sudo systemctl enable xrdp
-          sudo systemctl start xrdp
-
-      - name: Configure XRDP
-        run: |
-          # Configure XFCE as default session
+          sudo apt install -y xfce4 xfce4-goodies xrdp
+          
+          # Fix XRDP session issue
           echo "xfce4-session" > ~/.xsession
           sudo cp ~/.xsession /etc/skel/
           
-          # Allow XRDP through firewall (if ufw is active)
-          sudo ufw allow 3389/tcp 2>/dev/null || true
+          # Configure XRDP to use XFCE
+          sudo sed -i 's/^test -x \/etc\/X11\/Xsession && exec \/etc\/X11\/Xsession/startxfce4/' /etc/xrdp/startwm.sh
+          sudo sed -i 's/^exec \/bin\/sh \/etc\/X11\/Xsession/startxfce4/' /etc/xrdp/startwm.sh
+          
+          # Restart XRDP
+          sudo systemctl restart xrdp
 
-      - name: Create RDP User
+      - name: Create User
         run: |
-          # Generate random password
           PASSWORD=$(openssl rand -base64 12)
+          sudo useradd -m -s /bin/bash ubuntu 2>/dev/null || true
+          echo "ubuntu:$PASSWORD" | sudo chpasswd
+          sudo usermod -aG sudo ubuntu
           
-          # Create user 'kali' (or custom username)
-          sudo useradd -m -s /bin/bash kali 2>/dev/null || true
-          echo "kali:$PASSWORD" | sudo chpasswd
-          
-          # Add to sudo group
-          sudo usermod -aG sudo kali
-          
-          # Set password for GitHub environment
-          echo "RDP_USER=kali" >> $GITHUB_ENV
+          echo "RDP_USER=ubuntu" >> $GITHUB_ENV
           echo "RDP_PASS=$PASSWORD" >> $GITHUB_ENV
 
-      - name: Install and Configure Tailscale
+      - name: Install Tailscale
         run: |
-          # Install Tailscale
           curl -fsSL https://tailscale.com/install.sh | sudo sh
-          
-          # Connect to Tailscale
-          sudo tailscale up --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} --hostname=kali-runner-${{ github.run_id }}
-          
-          # Get Tailscale IP
+          sudo tailscale up --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} --hostname=ubuntu-xfce-${{ github.run_id }}
           TS_IP=$(sudo tailscale ip -4)
           echo "TS_IP=$TS_IP" >> $GITHUB_ENV
 
-      - name: Show Connection Information
+      - name: Show Connection Info
         run: |
-          echo "============================"
-          echo "✅ Kali Linux RDP Ready"
-          echo "IP Address (Tailscale): $TS_IP"
-          echo "Port: 3389"
-          echo "Username: kali"
-          echo "Password: $RDP_PASS"
-          echo "============================"
           echo ""
-          echo "Connect using:"
-          echo "  xfreerdp /v:$TS_IP /u:kali /p:'$RDP_PASS'"
-          echo "  OR"
-          echo "  remmina (GUI) -> RDP -> $TS_IP"
-          echo "============================"
+          echo "=========================================="
+          echo "✅ Ubuntu XFCE is ready!"
+          echo "=========================================="
+          echo "IP Address: $TS_IP"
+          echo "Port: 3389"
+          echo "Username: ubuntu"
+          echo "Password: $RDP_PASS"
+          echo "=========================================="
+          echo ""
+          echo "Connect with:"
+          echo "xfreerdp /v:$TS_IP /u:ubuntu /p:'$RDP_PASS'"
+          echo "=========================================="
 
       - name: Keep Alive
         run: |
           while true; do
-            echo "[$(date)] Kali RDP Session Active"
-            echo "Connected users:"
-            sudo xrdp-sesman --list-users 2>/dev/null || echo "No active sessions"
+            echo "[$(date)] Ubuntu XFCE running..."
             sleep 300
           done
