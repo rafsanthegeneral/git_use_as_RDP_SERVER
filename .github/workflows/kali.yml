@@ -1,66 +1,47 @@
-name: Ubuntu-XFCE-RDP
+name: Ubuntu-Terminal-RDP
 
 on:
   workflow_dispatch:
 
 jobs:
-  ubuntu-desktop:
+  ubuntu-terminal:
     runs-on: ubuntu-latest
     timeout-minutes: 360
 
     steps:
-      - name: Install XFCE and XRDP
+      - name: Install XRDP and Terminal
         run: |
           sudo apt update
-          sudo apt install -y xfce4 xfce4-goodies xrdp
+          sudo apt install -y xrdp xterm
           
-          # Fix XRDP session issue
-          echo "xfce4-session" > ~/.xsession
+          # Configure xterm as default
+          echo "xterm" > ~/.xsession
           sudo cp ~/.xsession /etc/skel/
-          
-          # Configure XRDP to use XFCE
-          sudo sed -i 's/^test -x \/etc\/X11\/Xsession && exec \/etc\/X11\/Xsession/startxfce4/' /etc/xrdp/startwm.sh
-          sudo sed -i 's/^exec \/bin\/sh \/etc\/X11\/Xsession/startxfce4/' /etc/xrdp/startwm.sh
-          
-          # Restart XRDP
           sudo systemctl restart xrdp
 
       - name: Create User
         run: |
-          PASSWORD=$(openssl rand -base64 12)
-          sudo useradd -m -s /bin/bash ubuntu 2>/dev/null || true
-          echo "ubuntu:$PASSWORD" | sudo chpasswd
-          sudo usermod -aG sudo ubuntu
-          
-          echo "RDP_USER=ubuntu" >> $GITHUB_ENV
+          PASSWORD=$(openssl rand -base64 8)
+          sudo useradd -m -s /bin/bash user
+          echo "user:$PASSWORD" | sudo chpasswd
+          echo "RDP_USER=user" >> $GITHUB_ENV
           echo "RDP_PASS=$PASSWORD" >> $GITHUB_ENV
 
       - name: Install Tailscale
         run: |
           curl -fsSL https://tailscale.com/install.sh | sudo sh
-          sudo tailscale up --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} --hostname=ubuntu-xfce-${{ github.run_id }}
+          sudo tailscale up --authkey=${{ secrets.TAILSCALE_AUTH_KEY }}
           TS_IP=$(sudo tailscale ip -4)
           echo "TS_IP=$TS_IP" >> $GITHUB_ENV
 
-      - name: Show Connection Info
+      - name: Show Info
         run: |
           echo ""
-          echo "=========================================="
-          echo "✅ Ubuntu XFCE is ready!"
-          echo "=========================================="
-          echo "IP Address: $TS_IP"
-          echo "Port: 3389"
-          echo "Username: ubuntu"
-          echo "Password: $RDP_PASS"
-          echo "=========================================="
+          echo "✅ Terminal Access Ready"
+          echo "IP: $TS_IP"
+          echo "User: user"
+          echo "Pass: $RDP_PASS"
           echo ""
-          echo "Connect with:"
-          echo "xfreerdp /v:$TS_IP /u:ubuntu /p:'$RDP_PASS'"
-          echo "=========================================="
 
       - name: Keep Alive
-        run: |
-          while true; do
-            echo "[$(date)] Ubuntu XFCE running..."
-            sleep 300
-          done
+        run: sleep 6h
