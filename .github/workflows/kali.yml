@@ -1,44 +1,29 @@
-name: Ubuntu-XFCE-RDP
+name: Ubuntu-SSH-Terminal
 
 on:
   workflow_dispatch:
 
 jobs:
-  ubuntu-desktop:
+  ubuntu-ssh:
     runs-on: ubuntu-latest
     timeout-minutes: 360
 
     steps:
-      - name: Install XFCE and XRDP
+      - name: Set Root Password
+        run: echo "root:root" | sudo chpasswd
+
+      - name: Setup SSH
         run: |
           sudo apt update
-          sudo apt install -y xfce4 xfce4-goodies xrdp
-          echo "xfce4-session" > ~/.xsession
-          sudo cp ~/.xsession /etc/skel/
-          sudo systemctl restart xrdp
-
-      - name: Set Root Password to 'root'
-        run: |
-          # Change root password
-          echo "root:root" | sudo chpasswd
-          
-          # Verify password was set
-          echo "Root password set to: root"
-
-      - name: Create User (Optional)
-        run: |
-          PASSWORD=$(openssl rand -base64 12)
-          sudo useradd -m -s /bin/bash ubuntu 2>/dev/null || true
-          echo "ubuntu:$PASSWORD" | sudo chpasswd
-          sudo usermod -aG sudo ubuntu
-          
-          echo "RDP_USER=ubuntu" >> $GITHUB_ENV
-          echo "RDP_PASS=$PASSWORD" >> $GITHUB_ENV
+          sudo apt install -y openssh-server
+          sudo systemctl start ssh
+          sudo sed -i 's/#PermitRootLogin prohibit-password/PermitRootLogin yes/' /etc/ssh/sshd_config
+          sudo systemctl restart ssh
 
       - name: Install Tailscale
         run: |
           curl -fsSL https://tailscale.com/install.sh | sudo sh
-          sudo tailscale up --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} --hostname=ubuntu-xfce-${{ github.run_id }}
+          sudo tailscale up --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} --hostname=ubuntu-ssh-${{ github.run_id }}
           TS_IP=$(sudo tailscale ip -4)
           echo "TS_IP=$TS_IP" >> $GITHUB_ENV
 
@@ -46,18 +31,10 @@ jobs:
         run: |
           echo ""
           echo "=========================================="
-          echo "✅ Ubuntu XFCE is ready!"
+          echo "✅ SSH Server Ready"
           echo "=========================================="
-          echo "IP Address: $TS_IP"
-          echo "Port: 3389 (RDP)"
-          echo ""
-          echo "ROOT ACCESS:"
-          echo "  Username: root"
-          echo "  Password: root"
-          echo ""
-          echo "USER ACCESS:"
-          echo "  Username: ubuntu"
-          echo "  Password: $RDP_PASS"
+          echo "ssh root@$TS_IP"
+          echo "Password: root"
           echo "=========================================="
 
       - name: Keep Alive
