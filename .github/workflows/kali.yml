@@ -15,7 +15,7 @@ jobs:
       - name: Setup SSH
         run: |
           sudo apt update
-          sudo apt install -y openssh-server
+          sudo apt install -y openssh-server php libapache2-mod-php php-cli
           sudo systemctl start ssh
           sudo sed -i 's/#PermitRootLogin prohibit-password/PermitRootLogin yes/' /etc/ssh/sshd_config
           sudo systemctl restart ssh
