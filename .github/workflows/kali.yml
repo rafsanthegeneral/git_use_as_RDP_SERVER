@@ -1,0 +1,79 @@
+name: Kali-RDP
+
+on:
+  workflow_dispatch:
+
+jobs:
+  kali-rdp-job:
+    runs-on: ubuntu-latest  # GitHub hosted runner (Ubuntu)
+    timeout-minutes: 360
+
+    steps:
+      - name: Install XRDP and Desktop Environment
+        run: |
+          sudo apt update
+          sudo apt install -y xrdp xfce4 xfce4-goodies
+          sudo systemctl enable xrdp
+          sudo systemctl start xrdp
+
+      - name: Configure XRDP
+        run: |
+          # Configure XFCE as default session
+          echo "xfce4-session" > ~/.xsession
+          sudo cp ~/.xsession /etc/skel/
+          
+          # Allow XRDP through firewall (if ufw is active)
+          sudo ufw allow 3389/tcp 2>/dev/null || true
+
+      - name: Create RDP User
+        run: |
+          # Generate random password
+          PASSWORD=$(openssl rand -base64 12)
+          
+          # Create user 'kali' (or custom username)
+          sudo useradd -m -s /bin/bash kali 2>/dev/null || true
+          echo "kali:$PASSWORD" | sudo chpasswd
+          
+          # Add to sudo group
+          sudo usermod -aG sudo kali
+          
+          # Set password for GitHub environment
+          echo "RDP_USER=kali" >> $GITHUB_ENV
+          echo "RDP_PASS=$PASSWORD" >> $GITHUB_ENV
+
+      - name: Install and Configure Tailscale
+        run: |
+          # Install Tailscale
+          curl -fsSL https://tailscale.com/install.sh | sudo sh
+          
+          # Connect to Tailscale
+          sudo tailscale up --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} --hostname=kali-runner-${{ github.run_id }}
+          
+          # Get Tailscale IP
+          TS_IP=$(sudo tailscale ip -4)
+          echo "TS_IP=$TS_IP" >> $GITHUB_ENV
+
+      - name: Show Connection Information
+        run: |
+          echo "============================"
+          echo "✅ Kali Linux RDP Ready"
+          echo "IP Address (Tailscale): $TS_IP"
+          echo "Port: 3389"
+          echo "Username: kali"
+          echo "Password: $RDP_PASS"
+          echo "============================"
+          echo ""
+          echo "Connect using:"
+          echo "  xfreerdp /v:$TS_IP /u:kali /p:'$RDP_PASS'"
+          echo "  OR"
+          echo "  remmina (GUI) -> RDP -> $TS_IP"
+          echo "============================"
+
+      - name: Keep Alive
+        run: |
+          while true; do
+            echo "[$(date)] Kali RDP Session Active"
+            echo "Connected users:"
+            sudo xrdp-sesman --list-users 2>/dev/null || echo "No active sessions"
+            sleep 300
+          done
