@@ -81,6 +81,8 @@ jobs:
           $ip = & "$env:ProgramFiles\Tailscale\tailscale.exe" ip -4
 
           echo "TS_IP=$ip" >> $env:GITHUB_ENV
+          echo "TS_IP=$ip"
+          echo "TS_IP=$ip" >> $env:GITHUB_ENV
 
       - name: Show Connection Info
         shell: powershell
