@@ -1,4 +1,4 @@
-```yaml
+
 name: RDP
 
 on:
@@ -106,4 +106,3 @@ jobs:
               Write-Host "[$(Get-Date)] Runner is alive..."
               Start-Sleep -Seconds 300
           }
-```
