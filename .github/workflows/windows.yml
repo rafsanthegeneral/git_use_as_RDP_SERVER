@@ -12,30 +12,24 @@ jobs:
       - name: Install .NET Framework 3.5
         shell: powershell
         run: |
-          Write-Host "Attempting to install .NET Framework 3.5..."
+          $ErrorActionPreference = "Continue"
+
+          Write-Host "Installing .NET Framework 3.5..."
 
           try {
               Enable-WindowsOptionalFeature -Online -FeatureName NetFx3 -All -NoRestart -ErrorAction Stop
-              Write-Host ".NET Framework 3.5 enabled successfully."
+              Write-Host ".NET Framework 3.5 enabled."
           }
           catch {
-              Write-Host "Enable-WindowsOptionalFeature failed. Trying Install-WindowsFeature..."
-
-              try {
-                  Install-WindowsFeature NET-Framework-Core -ErrorAction Stop
-                  Write-Host ".NET Framework 3.5 installed successfully."
-              }
-              catch {
-                  Write-Warning ".NET Framework 3.5 could not be installed on this runner."
-              }
+              Write-Warning "Unable to install .NET Framework 3.5 on this runner."
           }
 
-      - name: Enable RDP
+      - name: Enable Remote Desktop
         shell: powershell
         run: |
           Set-ItemProperty `
             -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' `
-            -Name "fDenyTSConnections" `
+            -Name fDenyTSConnections `
             -Value 0
 
           Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
@@ -46,60 +40,113 @@ jobs:
         run: |
           $password = -join ((33..126) | Get-Random -Count 16 | ForEach-Object { [char]$_ })
 
-          $securePass = ConvertTo-SecureString $password -AsPlainText -Force
+          $securePassword = ConvertTo-SecureString $password -AsPlainText -Force
 
-          New-LocalUser `
-            -Name "RDP" `
-            -Password $securePass `
-            -AccountNeverExpires
+          if (-not (Get-LocalUser -Name "RDP" -ErrorAction SilentlyContinue)) {
+              New-LocalUser `
+                  -Name "RDP" `
+                  -Password $securePassword `
+                  -AccountNeverExpires
 
-          Add-LocalGroupMember -Group "Administrators" -Member "RDP"
-          Add-LocalGroupMember -Group "Remote Desktop Users" -Member "RDP"
+              Add-LocalGroupMember -Group "Administrators" -Member "RDP"
+              Add-LocalGroupMember -Group "Remote Desktop Users" -Member "RDP"
+          }
 
-          echo "RDP_USER=RDP" >> $env:GITHUB_ENV
-          echo "RDP_PASS=$password" >> $env:GITHUB_ENV
+          "RDP_USER=RDP" >> $env:GITHUB_ENV
+          "RDP_PASS=$password" >> $env:GITHUB_ENV
 
       - name: Install Tailscale
         shell: powershell
         run: |
-          $url = "https://pkgs.tailscale.com/stable/tailscale-setup-latest-amd64.msi"
+          $ErrorActionPreference = "Stop"
+
           $msi = "$env:TEMP\tailscale.msi"
 
-          Invoke-WebRequest -Uri $url -OutFile $msi
+          Invoke-WebRequest `
+            -Uri "https://pkgs.tailscale.com/stable/tailscale-setup-latest-amd64.msi" `
+            -OutFile $msi
 
           Start-Process msiexec.exe `
-            -ArgumentList "/i `"$msi`" /quiet /norestart" `
+            -ArgumentList "/i `"$msi`" /qn /norestart" `
             -Wait
+
+          if (!(Test-Path "$env:ProgramFiles\Tailscale\tailscale.exe")) {
+              throw "Tailscale installation failed."
+          }
+
+          & "$env:ProgramFiles\Tailscale\tailscale.exe" version
 
       - name: Connect Tailscale
         shell: powershell
+        env:
+          TS_AUTHKEY: ${{ secrets.TAILSCALE_AUTH_KEY }}
         run: |
-          & "$env:ProgramFiles\Tailscale\tailscale.exe" up `
-            --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} `
-            --hostname=gh-runner-${{ github.run_id }}
-          echo "fucking running"
-          $ip = & "$env:ProgramFiles\Tailscale\tailscale.exe" ip -4
+          $ErrorActionPreference = "Stop"
 
-          echo "TS_IP=$ip" >> $env:GITHUB_ENV
-          echo "TS_IP=$ip"
-          echo "TS_IP=$ip" >> $env:GITHUB_ENV
+          if ([string]::IsNullOrWhiteSpace($env:TS_AUTHKEY)) {
+              throw "TAILSCALE_AUTH_KEY is empty."
+          }
+
+          Start-Service Tailscale -ErrorAction SilentlyContinue
+
+          $service = Get-Service Tailscale
+
+          $timeout = 30
+
+          while ($service.Status -ne "Running" -and $timeout -gt 0) {
+              Start-Sleep -Seconds 1
+              $service.Refresh()
+              $timeout--
+          }
+
+          if ($service.Status -ne "Running") {
+              throw "Tailscale service failed to start."
+          }
+
+          Write-Host "Connecting to Tailscale..."
+
+          & "$env:ProgramFiles\Tailscale\tailscale.exe" up `
+              --authkey="$env:TS_AUTHKEY" `
+              --hostname="gh-runner-${{ github.run_id }}" `
+              --accept-routes=false `
+              --accept-dns=false
+
+          $ip = $null
+
+          for ($i = 0; $i -lt 20; $i++) {
+              $ip = (& "$env:ProgramFiles\Tailscale\tailscale.exe" ip -4 2>$null)
+
+              if ($ip) {
+                  break
+              }
+
+              Start-Sleep -Seconds 2
+          }
+
+          if (!$ip) {
+              Write-Host "Tailscale status:"
+              & "$env:ProgramFiles\Tailscale\tailscale.exe" status
+              throw "Failed to obtain Tailscale IP."
+          }
+
+          "TS_IP=$ip" >> $env:GITHUB_ENV
 
       - name: Show Connection Info
         shell: powershell
         run: |
           Write-Host ""
           Write-Host "=================================="
-          Write-Host "RDP Ready"
+          Write-Host "RDP READY"
           Write-Host "=================================="
-          Write-Host "Tailscale IP : $env:TS_IP"
-          Write-Host "Username     : $env:RDP_USER"
-          Write-Host "Password     : $env:RDP_PASS"
+          Write-Host "IP Address : $env:TS_IP"
+          Write-Host "Username   : $env:RDP_USER"
+          Write-Host "Password   : $env:RDP_PASS"
           Write-Host "=================================="
 
-      - name: Keep Alive
+      - name: Keep Runner Alive
         shell: powershell
         run: |
-          while ($true) {
+          1..72 | ForEach-Object {
               Write-Host "[$(Get-Date)] Runner is alive..."
               Start-Sleep -Seconds 300
           }
