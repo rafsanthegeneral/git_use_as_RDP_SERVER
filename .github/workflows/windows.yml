@@ -1,0 +1,103 @@
+name: RDP
+
+on:
+  workflow_dispatch:
+
+jobs:
+  rdp-job:
+    runs-on: windows-latest
+    timeout-minutes: 360
+
+    steps:
+      - name: Install .NET Framework 3.5
+        shell: powershell
+        run: |
+          Write-Host "Attempting to install .NET Framework 3.5..."
+
+          try {
+              Enable-WindowsOptionalFeature -Online -FeatureName NetFx3 -All -NoRestart -ErrorAction Stop
+              Write-Host ".NET Framework 3.5 enabled successfully."
+          }
+          catch {
+              Write-Host "Enable-WindowsOptionalFeature failed. Trying Install-WindowsFeature..."
+
+              try {
+                  Install-WindowsFeature NET-Framework-Core -ErrorAction Stop
+                  Write-Host ".NET Framework 3.5 installed successfully."
+              }
+              catch {
+                  Write-Warning ".NET Framework 3.5 could not be installed on this runner."
+              }
+          }
+
+      - name: Enable RDP
+        shell: powershell
+        run: |
+          Set-ItemProperty `
+            -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' `
+            -Name "fDenyTSConnections" `
+            -Value 0
+
+          Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
+          Restart-Service TermService -Force
+
+      - name: Create RDP User
+        shell: powershell
+        run: |
+          $password = -join ((33..126) | Get-Random -Count 16 | ForEach-Object { [char]$_ })
+
+          $securePass = ConvertTo-SecureString $password -AsPlainText -Force
+
+          New-LocalUser `
+            -Name "RDP" `
+            -Password $securePass `
+            -AccountNeverExpires
+
+          Add-LocalGroupMember -Group "Administrators" -Member "RDP"
+          Add-LocalGroupMember -Group "Remote Desktop Users" -Member "RDP"
+
+          echo "RDP_USER=RDP" >> $env:GITHUB_ENV
+          echo "RDP_PASS=$password" >> $env:GITHUB_ENV
+
+      - name: Install Tailscale
+        shell: powershell
+        run: |
+          $url = "https://pkgs.tailscale.com/stable/tailscale-setup-latest-amd64.msi"
+          $msi = "$env:TEMP\tailscale.msi"
+
+          Invoke-WebRequest -Uri $url -OutFile $msi
+
+          Start-Process msiexec.exe `
+            -ArgumentList "/i `"$msi`" /quiet /norestart" `
+            -Wait
+
+      - name: Connect Tailscale
+        shell: powershell
+        run: |
+          & "$env:ProgramFiles\Tailscale\tailscale.exe" up `
+            --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} `
+            --hostname=gh-runner-${{ github.run_id }}
+
+          $ip = & "$env:ProgramFiles\Tailscale\tailscale.exe" ip -4
+
+          echo "TS_IP=$ip" >> $env:GITHUB_ENV
+
+      - name: Show Connection Info
+        shell: powershell
+        run: |
+          Write-Host ""
+          Write-Host "=================================="
+          Write-Host "RDP Ready"
+          Write-Host "=================================="
+          Write-Host "Tailscale IP : $env:TS_IP"
+          Write-Host "Username     : $env:RDP_USER"
+          Write-Host "Password     : $env:RDP_PASS"
+          Write-Host "=================================="
+
+      - name: Keep Alive
+        shell: powershell
+        run: |
+          while ($true) {
+              Write-Host "[$(Get-Date)] Runner is alive..."
+              Start-Sleep -Seconds 300
+          }
